@@ -67,6 +67,11 @@ return (
         source={{ uri: url || 'https://sudokupad.app/' }} 
         style={{ flex: 1 }} 
         injectedJavaScript={injectedScript}
+        cacheEnabled={true}
+        domStorageEnabled={true} 
+        javaScriptEnabled={true}
+        // It forces the WebView to use cached files if available, even if they are "expired"
+        cacheMode="LOAD_CACHE_ELSE_NETWORK"
         onMessage={async (event) => {
           try {
             const data = JSON.parse(event.nativeEvent.data);

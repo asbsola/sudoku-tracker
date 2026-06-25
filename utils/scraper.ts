@@ -1,4 +1,5 @@
 // utils/scraper.ts
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Regex for the actual playable iframes
 const SUDOKU_URL_REGEX = /https:\/\/(?:sudokupad\.app|app\.crackingthecryptic\.com)[^"'\s<>]+/g;
@@ -6,6 +7,9 @@ const SUDOKU_URL_REGEX = /https:\/\/(?:sudokupad\.app|app\.crackingthecryptic\.c
 const CTC_ARCHIVE_REGEX = /\/sudoku\?id=(\d+)/g;
 // Regex to grab the YouTube Video ID from the embed link
 const YOUTUBE_REGEX = /https:\/\/www\.youtube\.com\/embed\/([a-zA-Z0-9_-]+)/g;
+
+// A unique prefix for our daily cache
+const DAILY_CACHE_PREFIX = '@daily_puzzles_';
 
 export interface DailyPuzzle {
   url: string;
@@ -32,28 +36,65 @@ const extractSudokuPadId = (url: string): string => {
 };
 
 export const getDailySudokus = async (): Promise<DailyPuzzle[]> => {
+  // Get today's date string in YYYY-MM-DD format (e.g., "2026-06-25")
+  const todayDate = new Date().toISOString().split('T')[0];
+  const cacheKey = `${DAILY_CACHE_PREFIX}${todayDate}`;
+
   try {
+    // 1. Check if we already scraped today's puzzles
+    const cachedData = await AsyncStorage.getItem(cacheKey);
+    if (cachedData) {
+      console.log("⚡ Loaded today's puzzles from local cache!");
+      return JSON.parse(cachedData); // Instantly return the saved data
+    }
+
+    // 2. If no cache exists for today, fetch from the web
+    console.log("🌐 Fetching daily puzzles from the web...");
     const response = await fetch('https://crackingthecryptic.com/latest');
     const html = await response.text();
     
-    // 1. Get the puzzle URLs
     const sudokuUrls = extractUrls(html);
-    
-    // 2. Get the YouTube Video IDs
     const ytMatches = [...html.matchAll(YOUTUBE_REGEX)];
-    const ytIds = [...new Set(ytMatches.map(m => m[1]))]; // Ensure unique IDs
+    const ytIds = [...new Set(ytMatches.map(m => m[1]))];
 
-    // 3. Pair them up! (Assuming index 0 is Simon, index 1 is Mark)
-    return sudokuUrls.slice(0, 2).map((url, index) => {
+    const puzzles = sudokuUrls.slice(0, 2).map((url, index) => {
       const videoId = ytIds[index];
       return {
         url,
-        // Construct the direct image link using YouTube's standard thumbnail server
         thumbnail: videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : null
       };
     });
+
+    // 3. Save the newly scraped puzzles to local storage
+    if (puzzles.length > 0) {
+      await AsyncStorage.setItem(cacheKey, JSON.stringify(puzzles));
+
+      // 4. Housekeeping: Delete ANY older daily caches to save phone space
+      const allKeys = await AsyncStorage.getAllKeys();
+      const oldCacheKeys = allKeys.filter(key => 
+        key.startsWith(DAILY_CACHE_PREFIX) && key !== cacheKey
+      );
+      
+      if (oldCacheKeys.length > 0) {
+        await AsyncStorage.multiRemove(oldCacheKeys);
+        console.log("🧹 Cleaned up old daily puzzle caches.");
+      }
+    }
+
+    return puzzles;
   } catch (error) {
     console.error("Failed to fetch daily sudokus:", error);
+    
+    // 5. Offline Fallback: If you have no internet, try to load whatever is in the cache, even if it's from yesterday
+    const allKeys = await AsyncStorage.getAllKeys();
+    const fallbackKeys = allKeys.filter(key => key.startsWith(DAILY_CACHE_PREFIX));
+    
+    if (fallbackKeys.length > 0) {
+      console.log("📡 Offline mode: Loading older cached puzzles.");
+      const fallbackData = await AsyncStorage.getItem(fallbackKeys[0]);
+      if (fallbackData) return JSON.parse(fallbackData);
+    }
+    
     return [];
   }
 };
